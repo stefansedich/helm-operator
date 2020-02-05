@@ -79,10 +79,7 @@ func New(
 	helmClients *helm.Clients,
 	defaultHelmVersion string) *Controller {
 
-	// Add helm-operator types to the default Kubernetes Scheme so Events can be
-	// logged for helm-operator types.
 	s := newScheme()
-	ifscheme.AddToScheme(s)
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
 	recorder := eventBroadcaster.NewRecorder(s, corev1.EventSource{Component: controllerAgentName})
@@ -335,6 +332,7 @@ func (c *Controller) getHelmClientForRelease(hr helmfluxv1.HelmRelease) (helm.Cl
 
 func newScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
+	utilruntime.Must(ifscheme.AddToScheme(s))
 	utilruntime.Must(scheme.AddToScheme(s))
 	// API extensions are not in the above scheme set,
 	// and must thus be added separately.
