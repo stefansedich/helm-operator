@@ -8,8 +8,11 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -78,10 +81,11 @@ func New(
 
 	// Add helm-operator types to the default Kubernetes Scheme so Events can be
 	// logged for helm-operator types.
-	ifscheme.AddToScheme(scheme.Scheme)
+	s := newScheme()
+	ifscheme.AddToScheme(s)
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
+	recorder := eventBroadcaster.NewRecorder(s, corev1.EventSource{Component: controllerAgentName})
 
 	controller := &Controller{
 		logger:             logger,
@@ -123,7 +127,7 @@ func New(
 // stopCh is closed, at which point it will shutdown the workqueue and
 // wait for workers to finish processing their current work items.
 func (c *Controller) Run(threadiness int, stopCh <-chan struct{}, wg *sync.WaitGroup) {
-	defer runtime.HandleCrash()
+	defer utilruntime.HandleCrash()
 	defer c.releaseWorkqueue.ShutDown()
 
 	c.logger.Log("info", "starting operator")
@@ -181,7 +185,7 @@ func (c *Controller) processNextWorkItem() bool {
 			// Forget not to get into a loop of attempting to
 			// process a work item that is invalid.
 			c.releaseWorkqueue.Forget(obj)
-			runtime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
 
 			return nil
 		}
@@ -198,7 +202,7 @@ func (c *Controller) processNextWorkItem() bool {
 	}(obj)
 
 	if err != nil {
-		runtime.HandleError(err)
+		utilruntime.HandleError(err)
 		return true
 	}
 	return true
@@ -211,7 +215,7 @@ func (c *Controller) syncHandler(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		c.logger.Log("error", fmt.Sprintf("key '%s' is invalid: %v", key, err))
-		runtime.HandleError(fmt.Errorf("key '%s' is invalid", key))
+		utilruntime.HandleError(fmt.Errorf("key '%s' is invalid", key))
 		return nil
 	}
 
@@ -220,7 +224,7 @@ func (c *Controller) syncHandler(key string) error {
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			c.logger.Log("info", fmt.Sprintf("HelmRelease '%s' referred to in work queue no longer exists", key))
-			runtime.HandleError(fmt.Errorf("HelmRelease '%s' referred to in work queue no longer exists", key))
+			utilruntime.HandleError(fmt.Errorf("HelmRelease '%s' referred to in work queue no longer exists", key))
 			return nil
 		}
 		c.logger.Log("error", err.Error())
@@ -253,7 +257,7 @@ func getCacheKey(obj interface{}) (string, error) {
 	var err error
 
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
-		runtime.HandleError(err)
+		utilruntime.HandleError(err)
 		return "", err
 	}
 	return key, nil
@@ -327,4 +331,14 @@ func (c *Controller) getHelmClientForRelease(hr helmfluxv1.HelmRelease) (helm.Cl
 		return nil, fmt.Errorf("no Helm client for targeted version: %s", version)
 	}
 	return client, nil
+}
+
+func newScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	utilruntime.Must(scheme.AddToScheme(s))
+	// API extensions are not in the above scheme set,
+	// and must thus be added separately.
+	utilruntime.Must(apiextensionsv1beta1.AddToScheme(s))
+	utilruntime.Must(apiextensionsv1.AddToScheme(s))
+	return s
 }
